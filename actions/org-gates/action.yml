@@ -1,0 +1,71 @@
+name: Org gates
+description: Run the nonlocally org-convention gates against the calling repo's checkout. The gate files travel with this action — no token needed.
+inputs:
+  suite:
+    description: "conventions | contract-health"
+    required: true
+  python-version:
+    description: "Python to run pytest with"
+    default: "3.11"
+  placeholder-enforce:
+    description: "fail the placeholder/mock/stub gate instead of warning"
+    default: "false"
+  help-enforce:
+    description: "fail the scripts/--help-is-inert gate instead of warning (measured 43% FP before the read-only and exit-code fixes; advisory until a repo opts in)"
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+      with:
+        python-version: ${{ inputs.python-version }}
+    - shell: bash
+      run: pip install -q "pytest>=8,<9" "pytest-timeout>=2.3,<3" "pypdf>=5,<6"
+    - name: Locate the gate files (they ship with this action — fail loudly if absent)
+      id: loc
+      shell: bash
+      # SUITE arrives through env, never interpolated into the script body: a
+      # `${{ inputs.* }}` expansion inside `run:` is substituted as TEXT before
+      # bash sees it, so a caller threading a workflow input into `suite:` could
+      # inject shell here.
+      env:
+        SUITE: ${{ inputs.suite }}
+      run: |
+        set -euo pipefail
+        org="$(cd "$GITHUB_ACTION_PATH/../.." && pwd)"
+        d="$org/tests/org-conventions"
+        case "$SUITE" in
+          conventions)     files="test_pr_conventions.py test_scripts_help_is_inert.py test_no_confidential_blobs.py test_no_placeholders_added.py";;
+          contract-health) files="test_contract_health.py";;
+          *) echo "::error::unknown suite '$SUITE'"; exit 2;;
+        esac
+        for f in $files; do
+          grep -qE '^[[:space:]]*(async )?def test_' "$d/$f" || { echo "::error::gate file missing or empty: $d/$f"; exit 1; }
+        done
+        echo "org=$org" >> "$GITHUB_OUTPUT"
+        echo "files=$(for f in $files; do printf '%s ' "$d/$f"; done)" >> "$GITHUB_OUTPUT"
+    - name: Run ${{ inputs.suite }}
+      shell: bash
+      env:
+        REPO_ROOT: ${{ github.workspace }}
+        ORG_REPO_ROOT: ${{ steps.loc.outputs.org }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        BASE_REF: ${{ github.base_ref }}
+        GITHUB_BASE_REF: ${{ github.base_ref }}
+        ORG_GATE_PLACEHOLDER_ENFORCE: ${{ inputs.placeholder-enforce }}
+        ORG_GATE_HELP_ENFORCE: ${{ inputs.help-enforce }}
+        GATE_FILES: ${{ steps.loc.outputs.files }}
+        GATE_ROOTDIR: ${{ steps.loc.outputs.org }}/tests/org-conventions
+      # GATE_FILES is deliberately unquoted — it is a space-separated file list
+      # this action built itself from the fixed `case` arms above, never from a
+      # caller. Everything caller-influenceable reaches bash through env.
+      #
+      # -s (no output capture): the advisory gates emit their `::warning`
+      # annotations with print() inside a PASSING test. Under pytest's default
+      # capture those lines never reach the job log — measured 0 warning lines
+      # with capture on vs 7 (help gate) and 2 (placeholder) with it off — so
+      # the "warn until a repo opts in" rollout was invisible to every consumer.
+      # -s rather than -rA: the annotation prints once, inline beside the test
+      # that earned it, instead of re-listing every passing parametrization in
+      # a summary block. test_action_invocation.py runs this exact line.
+      run: pytest $GATE_FILES -v -s --timeout=30 --rootdir="$GATE_ROOTDIR" -p no:cacheprovider --tb=short

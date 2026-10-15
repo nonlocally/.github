@@ -1,0 +1,56 @@
+name: "org-conventions"
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  org-conventions:
+    name: Org conventions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: tests/org-conventions/requirements.txt
+      - run: python -m pip install -r tests/org-conventions/requirements.txt
+      - run: pytest tests/org-conventions/test_orggate.py tests/org-conventions/test_org_checks_workflow.py tests/org-conventions/test_action_invocation.py tests/org-conventions/test_gates_self_contained.py tests/contracts -q --timeout=30
+
+  org-gates-selfcheck:
+    name: Org gates self-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
+        with:
+          fetch-depth: 0
+
+      # Local-path resolution. Enforce here so the gate's fail path runs somewhere:
+      # callers get it advisory by default.
+      - uses: ./actions/org-gates
+        with:
+          suite: conventions
+          placeholder-enforce: "true"
+
+      # Cross-repo-style resolution pinned to this commit. `uses:` cannot take an expression,
+      # and `@main` would not contain this PR yet, so fetch this commit through a second
+      # checkout (how GitHub resolves `owner/repo/path@ref`) and run the action from there.
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
+        with:
+          repository: nonlocally/.github
+          ref: ${{ github.sha }}
+          path: gates-by-sha
+
+      - uses: ./gates-by-sha/actions/org-gates
+        with:
+          suite: contract-health
