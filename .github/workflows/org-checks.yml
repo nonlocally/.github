@@ -1,0 +1,101 @@
+name: Org Convention Checks
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: "Python version"
+        required: false
+        default: "3.11"
+        type: string
+      test-dirs:
+        description: "Repo-specific test directories (space-separated)"
+        required: false
+        default: ""
+        type: string
+      pytest-extra-args:
+        description: "Extra pytest arguments passed to the repo-tests job (e.g. --ignore=tests/heavy_test.py)"
+        required: false
+        default: ""
+        type: string
+      placeholder-enforce:
+        description: "Fail the placeholder/mock/stub gate instead of warning (per-repo opt-in — set 'true' once this consumer's advisory warnings measure clean)"
+        required: false
+        default: "false"
+        type: string
+      help-enforce:
+        description: "Fail the scripts/--help-is-inert gate instead of warning (per-repo opt-in — same rollout as placeholder-enforce)"
+        required: false
+        default: "false"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  org-conventions:
+    name: Org conventions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1 (node24)
+        with:
+          # Full history so the conventional-commit gate can compute the PR's
+          # merge-base (base..HEAD). A shallow checkout has no reachable base,
+          # which previously forced a fall back to scanning recent base-branch
+          # history and spuriously failed PRs on pre-existing main commits.
+          fetch-depth: 0
+
+      - uses: nonlocally/.github/actions/org-gates@main
+        with:
+          suite: conventions
+          python-version: ${{ inputs.python-version }}
+          placeholder-enforce: ${{ inputs.placeholder-enforce }}
+          help-enforce: ${{ inputs.help-enforce }}
+
+  contract-health:
+    name: Contract health
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1 (node24)
+
+      - uses: nonlocally/.github/actions/org-gates@main
+        with:
+          suite: contract-health
+          python-version: ${{ inputs.python-version }}
+
+  repo-tests:
+    name: Repo tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: inputs.test-dirs != ''
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1 (node24)
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0 (node24)
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[test]" 2>/dev/null || \
+          pip install -e ".[dev]" 2>/dev/null || \
+          pip install "pytest>=8,<9" "pytest-timeout>=2.3,<3"
+
+      - name: Run repo tests
+        env:
+          TEST_DIRS: ${{ inputs.test-dirs }}
+          PYTEST_EXTRA_ARGS: ${{ inputs.pytest-extra-args }}
+        run: |
+          for dir in $TEST_DIRS; do
+            if [ -d "$dir" ]; then
+              echo "=== $dir ==="
+              # shellcheck disable=SC2086
+              pytest "$dir" -v --timeout=30 --tb=short $PYTEST_EXTRA_ARGS || exit 1
+            fi
+          done
