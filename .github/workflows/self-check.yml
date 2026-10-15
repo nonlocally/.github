@@ -24,7 +24,7 @@ jobs:
           cache: pip
           cache-dependency-path: tests/org-conventions/requirements.txt
       - run: python -m pip install -r tests/org-conventions/requirements.txt
-      - run: pytest tests/org-conventions/test_orggate.py tests/org-conventions/test_org_checks_workflow.py tests/org-conventions/test_action_invocation.py tests/org-conventions/test_gates_self_contained.py tests/contracts -q --timeout=30
+      - run: pytest tests/org-conventions/test_orggate.py tests/org-conventions/test_org_checks_workflow.py tests/org-conventions/test_action_invocation.py tests/org-conventions/test_gates_self_contained.py tests/org-conventions/test_no_confidential_blobs.py tests/contracts -q --timeout=30
 
   org-gates-selfcheck:
     name: Org gates self-check
