@@ -6,7 +6,13 @@ the reason this file exists, as much as the content checks.
 
 The private names are listed only as SHA-256 digests of lower-cased tokens, so that this file
 does not publish the very names it guards against. To add one, append
-`hashlib.sha256(token.lower().encode()).hexdigest()`.
+`hashlib.sha256(token.lower().encode()).hexdigest()`. A token is matched as a whole word, as a
+dot-separated suffix (so a subdomain of a listed domain is caught), and as any run of its
+hyphen- or underscore-separated parts (so a longer name built on a listed one is caught). Names
+glued to other letters with no separator are not caught.
+
+The synthetic values in the positive control are assembled at run time, so that this file can
+scan itself without tripping on them.
 
 Run locally: pytest tests/policies/test_kg_rules.py -v --timeout=30
 """
@@ -20,9 +26,18 @@ ROOT = Path(__file__).resolve().parents[2]
 SPINE = ROOT / "LEAN4_SPINE_POLICY.md"
 COMPAT = ROOT / "KNOWLEDGE_FORMAT_COMPATIBILITY_POLICY.md"
 README = ROOT / "README.md"
+THIS_FILE = Path(__file__).resolve()
 
-# Private host, project, schema and person names (24 digests; the last is a harmless canary
-# token used by the positive control below).
+# The upstream revisions the compatibility policy says were read. Pinned exactly.
+PINNED_REVISIONS = (
+    "0003e7f3ec273f5caf84849850d560b12e9527e4",  # GoogleCloudPlatform/knowledge-catalog okf/ (frozen v0.2)
+    "8a8ff87bfd3847c34c9ddd4fbfd9296be2aee4a3",  # GoogleCloudPlatform/open-knowledge-format (deprecated)
+    "527e81aff55992be21507e97004286789126f88c",  # open-knowledge-format/open-knowledge-format (v0.3)
+    "808987c5daa4da150e38ecc87f5e4ed6cdfdc0c9",  # zach-blumenfeld/knowledge-index
+)
+
+# Private host, project, schema and person names (23 digests), then two harmless canaries that
+# the positive control uses: a name and a domain.
 PRIVATE_TOKEN_DIGESTS = frozenset({
     "66335200c714f0f9e82c981e30cadb3515185f4ce42a860c966eeb9feed43f89",
     "2d69120f4a37384f5b712c447e7bd630eda348a5ad96ce3356900d6410935b56",
@@ -37,7 +52,6 @@ PRIVATE_TOKEN_DIGESTS = frozenset({
     "728200129eccb567a9b6483bd99adde616f72aaa3a38ed0d68829b4d199e2907",
     "e21331ee56ae0718765b3bed7532bab712ab9cda82eca8a16d9eedb8adeb411b",
     "0a0a80b74c33b9707b29e2d3e843ea0bdc28b9b2177791086fcc2e44d6063225",
-    "8d60e91d6b9ab6265415851b2bbb6a5f26b9a80e76aa5d7d0b2d04bd93fb2131",
     "aefa2523dbd273d7f0b0345b915723939e8cd7aa84209ccbefde79a910cbaabf",
     "27279e1d41148ec1d9330dac341cd319a94783c32fe8e2906a7ff4a645139ffb",
     "81e4206f159d715c585bea6c5e56c4c619a75f4dd8a0e7e8104b0d3a84cffa10",
@@ -48,23 +62,30 @@ PRIVATE_TOKEN_DIGESTS = frozenset({
     "d7f133ed575d75d25430302ee79deefc2f741822421becc0f09d3a10e56450d0",
     "c93c10ad8e3136d139c956e8519049addafabadd9fe74ca7c1685014aee7925f",
     "bc132cc70bf7a89380167b1fede1995c0c97fe90e0313590677ad7958f40398d",
+    "64d6b927ba135c0b5e7fa9cf85e35e072e77e477573b49b2c35bb3328a2f10d0",
 })
+DIGEST_LINE = re.compile(r'^\s*"[0-9a-f]{64}",\s*$')
 
 # Generic shapes that identify private infrastructure or private measurements.
 PRIVATE_SHAPES = (
     r"\b100\.\d{1,3}\.\d{1,3}\.\d{1,3}\b",          # CGNAT-range (100.x) addresses
-    r"\b\d{1,3}(,\d{3})+\b",                         # measured counts, comma-grouped
+    r"\b\d{1,3}(?:,\d{3})+\b",                       # counts with thousands separators
+    r"\b(?!(?:19|20)\d\d\b)\d{4,}\b",                # counts without separators (years exempt)
     r"github\.com/(?!open-knowledge-format/|GoogleCloudPlatform/|zach-blumenfeld/)[\w.-]+/",
 )
 
 
 def _candidates(text: str) -> set[str]:
-    """Every token, with its dotted parts, lower-cased and stripped of edge punctuation."""
+    """Each token, its dot-separated suffixes and parts, and every run of its -/_ separated parts."""
     out = set()
     for tok in re.findall(r"[a-z0-9][a-z0-9._-]*", text.lower()):
         tok = tok.strip("._-")
-        out.add(tok)
-        out.update(p.strip("._-") for p in tok.split("."))
+        dotted = [p for p in tok.split(".") if p]
+        pieces = {tok} | set(dotted) | {".".join(dotted[i:]) for i in range(len(dotted))}
+        for piece in list(pieces):
+            parts = [p for p in re.split(r"[-_]", piece) if p]
+            pieces |= {"-".join(parts[i:j]) for i in range(len(parts)) for j in range(i + 1, len(parts) + 1)}
+        out |= pieces
     return out - {""}
 
 
@@ -93,6 +114,8 @@ def test_spine_quotes_the_owner_and_states_the_rule():
     assert "never a property" in low and "project@revision" in text
     for axiom in ("propext", "Classical.choice", "Quot.sound", "sorryAx"):
         assert axiom in text
+    # The grounding definition is a proposal, not the owner's words; say so.
+    assert "proposed definition, pending the owner's confirmation" in text
     assert "lean kernel" in low and "never asserted by an llm" in low
     assert "ratchet" in low and "100%" in text and "formalization obligation" in low
 
@@ -108,8 +131,9 @@ def test_compat_quotes_the_owner_and_links_the_sources():
         "https://github.com/zach-blumenfeld/knowledge-index",
     ):
         assert url in text, f"missing source link {url}"
-    assert "frozen" in text.lower() and "v0.3" in text
-    assert len(set(re.findall(r"\b[0-9a-f]{40}\b", text))) >= 3, "pin the upstream revisions read"
+    assert "frozen" in text.lower() and "Version 0.3" in text
+    missing = [sha for sha in PINNED_REVISIONS if sha not in text]
+    assert not missing, f"pinned revisions missing from the policy: {missing}"
 
 
 def test_readme_points_at_both_policies():
@@ -123,14 +147,34 @@ def test_public_copy_leaks_no_private_names(path: Path):
     assert not found, f"{path.name} names private infrastructure or measurements: {found}"
 
 
+def test_this_file_leaks_nothing_outside_its_digest_list():
+    body = "\n".join(line for line in THIS_FILE.read_text().splitlines() if not DIGEST_LINE.match(line))
+    found = leaks(body)
+    assert not found, f"{THIS_FILE.name} names private infrastructure or measurements: {found}"
+
+
 def test_leak_detector_bites():
-    """Positive control: a hashed token (the canary) and each generic shape are caught."""
-    line = (
-        "Baseline 0 of 13,053 on host 100.64.1.2, see https://github.com/some-private-org/x; "
-        "token Canary-Private-Token-7f3a."
+    """Positive control: every matching rule fires on synthetic input, and ordinary text stays clean."""
+    name = "-".join(["canary", "private", "token", "7f3a"])
+    domain = ".".join(["canary-domain-7f3a", "test"])
+    count_sep = ",".join(["12", "345", "678"])
+    count_plain = "9" * 6
+    address = ".".join(["100", "64", "0", "99"])
+    org_prefix = "github.com/" + "some-private-org" + "/"
+    probes = {
+        "exact name": (f"token {name.upper()}.", name),
+        "underscored name": (f"token {name.replace('-', '_')}", name),
+        "longer name": (f"host {name}-local", name),
+        "exact domain": (f"see {domain}", domain),
+        "subdomain": (f"see https://bus.{domain}/x", domain),
+        "separated count": (f"0 of {count_sep}", count_sep),
+        "plain count": (f"0 of {count_plain}", count_plain),
+        "address": (f"host {address}", address),
+        "private org link": (f"https://{org_prefix}x", org_prefix),
+    }
+    for label, (text, expected) in probes.items():
+        assert expected in leaks(text), f"leak detector missed the {label} probe: {text!r}"
+    assert not leaks(
+        "propext, Classical.choice and Quot.sound; OKF Version 0.3, read 2026-11-25; "
+        "https://github.com/open-knowledge-format/open-knowledge-format; 100% coverage."
     )
-    found = leaks(line)
-    assert "canary-private-token-7f3a" in found
-    assert "13,053" in found and "100.64.1.2" in found
-    assert any("some-private-org" in f for f in found)
-    assert not leaks("propext, Classical.choice and Quot.sound; see open-knowledge-format v0.3.")

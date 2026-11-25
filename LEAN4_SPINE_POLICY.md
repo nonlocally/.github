@@ -17,11 +17,13 @@
 
 1. **Link by edge, never a property.** Every math, physics or engineering unit in the knowledge graph links by a relationship (an edge) to a Lean 4 declaration pinned by `project@revision`: the Lean project and the full commit hash of the checkout that was checked. This covers math-object nodes, document-graph equations and definitions, and any new kind of math content. A Lean name stored in a property is not a link and never counts toward coverage; migrate it to an edge. Use the relationship type your graph's schema defines; do not invent a parallel one.
 
-2. **Grounding.** A link grounds its unit only if the declaration's kernel-computed, transitive axiom closure (`#print axioms`) is non-empty and inside the allowed set:
+2. **Grounding (proposed definition, pending the owner's confirmation).** The owner requires links to "the axioms-derived graphs (mathlib4 and physics axioms)". The working definition below was proposed by the lead maintainer and is not the owner's wording: a link grounds its unit only if the declaration's kernel-computed, transitive axiom closure (`#print axioms`) is non-empty and inside the allowed set:
    - Lean core and the Mathlib4 trusted core: `propext`, `Classical.choice`, `Quot.sound`;
    - the physics-axiom namespaces that the organization has explicitly named and reviewed.
 
    `sorryAx`, `Lean.ofReduceBool` (from `native_decide`) and every other axiom, ad-hoc, project-local or imported, are not grounding. A link to an ungrounded declaration may be stored, but it is reported as ungrounded and does not count toward coverage.
+
+   Compared with the usual Lean-repository rule (closure ⊆ {`propext`, `Classical.choice`, `Quot.sound`}, which an empty closure satisfies), this definition is stricter in one way and wider in another: a declaration with an empty closure does not ground, and the named physics-axiom namespaces do.
 
 3. **Verified by the Lean kernel, never asserted by an LLM.** A link is verified only by a compiled check that the Lean kernel runs. Lean's FFI and a `lake` executable both qualify. An LLM, an embedding match or a name match may *propose* a link; only the kernel check verifies it. Each verification records:
    - the toolchain (the `lean-toolchain` string);
