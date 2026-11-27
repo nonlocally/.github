@@ -14,7 +14,7 @@ concurrency:
 jobs:
   org-conventions:
     name: Org conventions
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, fleet-linux]  # was ubuntu-latest (GitHub-hosted); GB-34 fleet-only CI
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
@@ -28,7 +28,7 @@ jobs:
 
   org-gates-selfcheck:
     name: Org gates self-check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, fleet-linux]  # was ubuntu-latest (GitHub-hosted); GB-34 fleet-only CI
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
